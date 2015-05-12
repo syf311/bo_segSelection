@@ -1,4 +1,4 @@
-package org.template.ecommercerecommendation
+package org.template.segselectionrecommendation
 
 import io.prediction.controller.PPreparator
 
@@ -12,15 +12,13 @@ class Preparator
   def prepare(sc: SparkContext, trainingData: TrainingData): PreparedData = {
     new PreparedData(
       users = trainingData.users,
-      items = trainingData.items,
-      viewEvents = trainingData.viewEvents,
-      buyEvents = trainingData.buyEvents)
+      segs = trainingData.segs,
+      connectEvents = trainingData.connectEvents)
   }
 }
 
 class PreparedData(
   val users: RDD[(String, User)],
-  val items: RDD[(String, Item)],
-  val viewEvents: RDD[ViewEvent],
-  val buyEvents: RDD[BuyEvent]
+  val segs: RDD[(String, Seg)],
+  val connectEvents: RDD[ConnectEvent]
 ) extends Serializable

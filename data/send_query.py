@@ -4,4 +4,8 @@ Send sample query to prediction engine
 
 import predictionio
 engine_client = predictionio.EngineClient(url="http://localhost:8000")
+print engine_client.send_query({"user": "u4", "num": 4})
+print engine_client.send_query({"user": "u5", "num": 4})
 print engine_client.send_query({"user": "u1", "num": 4})
+print engine_client.send_query({"user": "u3", "num": 4})
+

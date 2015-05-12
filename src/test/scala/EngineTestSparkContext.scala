@@ -1,4 +1,4 @@
-package org.template.ecommercerecommendation
+/*package org.template.ecommercerecommendation
 
 import org.apache.spark.{SparkConf, SparkContext}
 import org.scalatest.{BeforeAndAfterAll, Suite}
@@ -34,3 +34,4 @@ object LocalSparkContext {
     System.clearProperty("spark.driver.port")
   }
 }
+*/

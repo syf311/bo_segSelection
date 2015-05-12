@@ -8,14 +8,14 @@ import random
 
 SEED = 3
 
-def import_events(client):
+def import_events(client, file):
   random.seed(SEED)
   count = 0
   print client.get_status()
   print "Importing data..."
 
-  # generate 10 users, with user ids u1,u2,....,u10
-  user_ids = ["u%s" % i for i in range(1, 11)]
+  # generate 10 users, with user ids u1,u2,....,u5
+  user_ids = ["u%s" % i for i in range(1, 6)]
   for user_id in user_ids:
     print "Set user", user_id
     client.create_event(
@@ -25,53 +25,42 @@ def import_events(client):
     )
     count += 1
 
-  # generate 50 items, with item ids i1,i2,....,i50
-  # random assign 1 to 4 categories among c1-c6 to items
-  categories = ["c%s" % i for i in range(1, 7)]
-  item_ids = ["i%s" % i for i in range(1, 51)]
-  for item_id in item_ids:
-    print "Set item", item_id
+  # generate 5 segs, with item ids i1,i2,....,i5
+  
+  seg_ids = ["s%s" % i for i in range(1, 6)]
+  for seg_id in seg_ids:
+    print "Set seg", seg_id
     client.create_event(
       event="$set",
-      entity_type="item",
-      entity_id=item_id,
-      properties={
-        "categories" : random.sample(categories, random.randint(1, 4))
-      }
+      entity_type="seg",
+      entity_id=seg_id
     )
     count += 1
 
-  # each user randomly viewed 10 items
-  for user_id in user_ids:
-    for viewed_item in random.sample(item_ids, 10):
-      print "User", user_id ,"views item", viewed_item
-      client.create_event(
-        event="view",
-        entity_type="user",
-        entity_id=user_id,
-        target_entity_type="item",
-        target_entity_id=viewed_item
-      )
-      count += 1
-      # randomly buy some of the viewed items
-      if random.choice([True, False]):
-        print "User", user_id ,"buys item", viewed_item
-        client.create_event(
-          event="buy",
-          entity_type="user",
-          entity_id=user_id,
-          target_entity_type="item",
-          target_entity_id=viewed_item
-        )
-        count += 1
+  # genreate connect events
+  f = open(file, 'r')
+  print "Importing connect events..."
+  for line in f:
+    data = line.rstrip('\r\n')
+    conn = data.split(" ")
+    client.create_event(
+      event="connect",
+      entity_type="user",
+      entity_id=conn[0], # use the count num as user ID
+      target_entity_type="seg",
+      target_entity_id=conn[1]
+    )
+    count += 1
+  f.close()
 
   print "%s events are imported." % count
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(
-    description="Import sample data for e-commerce recommendation engine")
-  parser.add_argument('--access_key', default='invald_access_key')
+    description="Import sample data for seg selection recommendation engine")
+  parser.add_argument('--access_key', default='hIYvrzPPI9bHlFvw2dJDVEkeWyJo9ZeP4TOy9dxccHJahKhi7dUpKJ0Wz8V00cgb')
   parser.add_argument('--url', default="http://localhost:7070")
+  parser.add_argument('--file', default="./data/connect.txt")
 
   args = parser.parse_args()
   print args
@@ -81,4 +70,4 @@ if __name__ == '__main__':
     url=args.url,
     threads=5,
     qsize=500)
-  import_events(client)
+  import_events(client, args.file)
