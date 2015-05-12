@@ -1,4 +1,4 @@
-package org.template.ecommercerecommendation
+package org.template.segselectionrecommendation
 
 import io.prediction.controller.P2LAlgorithm
 import io.prediction.controller.Params
@@ -18,7 +18,7 @@ import scala.collection.mutable.PriorityQueue
 import scala.concurrent.duration.Duration
 import scala.concurrent.ExecutionContext.Implicits.global
 
-case class ECommAlgorithmParams(
+case class SegSelectionAlgorithmParams(
   appName: String,
   unseenOnly: Boolean,
   seenEvents: List[String],
@@ -30,67 +30,67 @@ case class ECommAlgorithmParams(
 ) extends Params
 
 
-case class ProductModel(
-  item: Item,
+case class SegModel(
+  seg: Seg,
   features: Option[Array[Double]], // features by ALS
   count: Int // popular count for default score
 )
 
-class ECommModel(
+class SegSelectionModel(
   val rank: Int,
   val userFeatures: Map[Int, Array[Double]],
-  val productModels: Map[Int, ProductModel],
+  val segModels: Map[Int, SegModel],
   val userStringIntMap: BiMap[String, Int],
-  val itemStringIntMap: BiMap[String, Int]
+  val segStringIntMap: BiMap[String, Int]
 ) extends Serializable {
 
-  @transient lazy val itemIntStringMap = itemStringIntMap.inverse
+  @transient lazy val segIntStringMap = segStringIntMap.inverse
 
   override def toString = {
     s" rank: ${rank}" +
     s" userFeatures: [${userFeatures.size}]" +
     s"(${userFeatures.take(2).toList}...)" +
-    s" productModels: [${productModels.size}]" +
-    s"(${productModels.take(2).toList}...)" +
+    s" segModels: [${segModels.size}]" +
+    s"(${segModels.take(2).toList}...)" +
     s" userStringIntMap: [${userStringIntMap.size}]" +
     s"(${userStringIntMap.take(2).toString}...)]" +
-    s" itemStringIntMap: [${itemStringIntMap.size}]" +
-    s"(${itemStringIntMap.take(2).toString}...)]"
+    s" segStringIntMap: [${segStringIntMap.size}]" +
+    s"(${segStringIntMap.take(2).toString}...)]"
   }
 }
 
-class ECommAlgorithm(val ap: ECommAlgorithmParams)
-  extends P2LAlgorithm[PreparedData, ECommModel, Query, PredictedResult] {
+class SegSelectionAlgorithm(val ap: SegSelectionAlgorithmParams)
+  extends P2LAlgorithm[PreparedData, SegSelectionModel, Query, PredictedResult] {
 
   @transient lazy val logger = Logger[this.type]
 
-  def train(sc: SparkContext, data: PreparedData): ECommModel = {
-    require(!data.viewEvents.take(1).isEmpty,
-      s"viewEvents in PreparedData cannot be empty." +
+  def train(sc: SparkContext, data: PreparedData): SegSelectionModel = {
+    require(!data.connectEvents.take(1).isEmpty,
+      s"connectEvents in PreparedData cannot be empty." +
       " Please check if DataSource generates TrainingData" +
       " and Preprator generates PreparedData correctly.")
     require(!data.users.take(1).isEmpty,
       s"users in PreparedData cannot be empty." +
       " Please check if DataSource generates TrainingData" +
       " and Preprator generates PreparedData correctly.")
-    require(!data.items.take(1).isEmpty,
-      s"items in PreparedData cannot be empty." +
+    require(!data.segs.take(1).isEmpty,
+      s"segs in PreparedData cannot be empty." +
       " Please check if DataSource generates TrainingData" +
       " and Preprator generates PreparedData correctly.")
-    // create User and item's String ID to integer index BiMap
+    // create User and seg's String ID to integer index BiMap
     val userStringIntMap = BiMap.stringInt(data.users.keys)
-    val itemStringIntMap = BiMap.stringInt(data.items.keys)
+    val segStringIntMap = BiMap.stringInt(data.segs.keys)
 
     val mllibRatings: RDD[MLlibRating] = genMLlibRating(
       userStringIntMap = userStringIntMap,
-      itemStringIntMap = itemStringIntMap,
+      segStringIntMap = segStringIntMap,
       data = data
     )
 
     // MLLib ALS cannot handle empty training data.
     require(!mllibRatings.take(1).isEmpty,
       s"mllibRatings cannot be empty." +
-      " Please check if your events contain valid user and item ID.")
+      " Please check if your events contain valid user and seg ID.")
 
     // seed for MLlib ALS
     val seed = ap.seed.getOrElse(System.nanoTime)
@@ -108,37 +108,36 @@ class ECommAlgorithm(val ap: ECommAlgorithmParams)
     val userFeatures = m.userFeatures.collectAsMap.toMap
 
     // convert ID to Int index
-    val items = data.items.map { case (id, item) =>
-      (itemStringIntMap(id), item)
+    val segs = data.segs.map { case (id, seg) =>
+      (segStringIntMap(id), seg)
     }
 
-    // join item with the trained productFeatures
-    val productFeatures: Map[Int, (Item, Option[Array[Double]])] =
-      items.leftOuterJoin(m.productFeatures).collectAsMap.toMap
+    // join seg with the trained segFeatures
+    val segFeatures = segs.leftOuterJoin(m.productFeatures).collectAsMap.toMap
 
     val popularCount = trainDefault(
       userStringIntMap = userStringIntMap,
-      itemStringIntMap = itemStringIntMap,
+      segStringIntMap = segStringIntMap,
       data = data
     )
 
-    val productModels: Map[Int, ProductModel] = productFeatures
-      .map { case (index, (item, features)) =>
-        val pm = ProductModel(
-          item = item,
+    val segModels: Map[Int, SegModel] = segFeatures
+      .map { case (index, (seg, features)) =>
+        val sm = SegModel(
+          seg = seg,
           features = features,
-          // NOTE: use getOrElse because popularCount may not contain all items.
+          // NOTE: use getOrElse because popularCount may not contain all segs.
           count = popularCount.getOrElse(index, 0)
         )
-        (index, pm)
+        (index, sm)
       }
 
-    new ECommModel(
+    new SegSelectionModel(
       rank = m.rank,
       userFeatures = userFeatures,
-      productModels = productModels,
+      segModels = segModels,
       userStringIntMap = userStringIntMap,
-      itemStringIntMap = itemStringIntMap
+      segStringIntMap = segStringIntMap
     )
   }
 
@@ -147,33 +146,33 @@ class ECommAlgorithm(val ap: ECommAlgorithmParams)
     */
   def genMLlibRating(
     userStringIntMap: BiMap[String, Int],
-    itemStringIntMap: BiMap[String, Int],
+    segStringIntMap: BiMap[String, Int],
     data: PreparedData): RDD[MLlibRating] = {
 
-    val mllibRatings = data.viewEvents
+    val mllibRatings = data.connectEvents
       .map { r =>
-        // Convert user and item String IDs to Int index for MLlib
+        // Convert user and seg String IDs to Int index for MLlib
         val uindex = userStringIntMap.getOrElse(r.user, -1)
-        val iindex = itemStringIntMap.getOrElse(r.item, -1)
+        val sindex = segStringIntMap.getOrElse(r.seg, -1)
 
         if (uindex == -1)
           logger.info(s"Couldn't convert nonexistent user ID ${r.user}"
             + " to Int index.")
 
-        if (iindex == -1)
-          logger.info(s"Couldn't convert nonexistent item ID ${r.item}"
+        if (sindex == -1)
+          logger.info(s"Couldn't convert nonexistent seg ID ${r.seg}"
             + " to Int index.")
 
-        ((uindex, iindex), 1)
+        ((uindex, sindex), 1)
       }
-      .filter { case ((u, i), v) =>
-        // keep events with valid user and item index
-        (u != -1) && (i != -1)
+      .filter { case ((u, s), v) =>
+        // keep events with valid user and seg index
+        (u != -1) && (s != -1)
       }
-      .reduceByKey(_ + _) // aggregate all view events of same user-item pair
-      .map { case ((u, i), v) =>
-        // MLlibRating requires integer index for user and item
-        MLlibRating(u, i, v)
+      .reduceByKey(_ + _) // aggregate all connect events of same user-seg pair
+      .map { case ((u, s), v) =>
+        // MLlibRating requires integer index for user and seg
+        MLlibRating(u, s, v)
       }
       .cache()
 
@@ -182,53 +181,53 @@ class ECommAlgorithm(val ap: ECommAlgorithmParams)
 
   /** Train default model.
     * You may customize this function if use different events or
-    * need different ways to count "popular" score or return default score for item.
+    * need different ways to count "popular" score or return default score for seg.
     */
   def trainDefault(
     userStringIntMap: BiMap[String, Int],
-    itemStringIntMap: BiMap[String, Int],
+    segStringIntMap: BiMap[String, Int],
     data: PreparedData): Map[Int, Int] = {
     // count number of buys
-    // (item index, count)
-    val buyCountsRDD: RDD[(Int, Int)] = data.buyEvents
+    // (seg index, count)
+    val connectCountsRDD: RDD[(Int, Int)] = data.connectEvents
       .map { r =>
-        // Convert user and item String IDs to Int index
+        // Convert user and seg String IDs to Int index
         val uindex = userStringIntMap.getOrElse(r.user, -1)
-        val iindex = itemStringIntMap.getOrElse(r.item, -1)
+        val sindex = segStringIntMap.getOrElse(r.seg, -1)
 
         if (uindex == -1)
           logger.info(s"Couldn't convert nonexistent user ID ${r.user}"
             + " to Int index.")
 
-        if (iindex == -1)
-          logger.info(s"Couldn't convert nonexistent item ID ${r.item}"
+        if (sindex == -1)
+          logger.info(s"Couldn't convert nonexistent seg ID ${r.seg}"
             + " to Int index.")
 
-        (uindex, iindex, 1)
+        (uindex, sindex, 1)
       }
-      .filter { case (u, i, v) =>
-        // keep events with valid user and item index
-        (u != -1) && (i != -1)
+      .filter { case (u, s, v) =>
+        // keep events with valid user and seg index
+        (u != -1) && (s != -1)
       }
-      .map { case (u, i, v) => (i, 1) } // key is item
-      .reduceByKey{ case (a, b) => a + b } // count number of items occurrence
+      .map { case (u, s, v) => (s, 1) } // key is seg
+      .reduceByKey{ case (a, b) => a + b } // count number of segs occurrence
 
-    buyCountsRDD.collectAsMap.toMap
+    connectCountsRDD.collectAsMap.toMap
   }
 
-  def predict(model: ECommModel, query: Query): PredictedResult = {
+  def predict(model: SegSelectionModel, query: Query): PredictedResult = {
 
     val userFeatures = model.userFeatures
-    val productModels = model.productModels
+    val segModels = model.segModels
 
     // convert whiteList's string ID to integer index
     val whiteList: Option[Set[Int]] = query.whiteList.map( set =>
-      set.flatMap(model.itemStringIntMap.get(_))
+      set.flatMap(model.segStringIntMap.get(_))
     )
 
     val finalBlackList: Set[Int] = genBlackList(query = query)
-      // convert seen Items list from String ID to interger Index
-      .flatMap(x => model.itemStringIntMap.get(x))
+      // convert seen Segs list from String ID to interger Index
+      .flatMap(x => model.segStringIntMap.get(x))
 
     val userFeature: Option[Array[Double]] =
       model.userStringIntMap.get(query.user).flatMap { userIndex =>
@@ -239,7 +238,7 @@ class ECommAlgorithm(val ap: ECommAlgorithmParams)
       // the user has feature vector
       predictKnownUser(
         userFeature = userFeature.get,
-        productModels = productModels,
+        segModels = segModels,
         query = query,
         whiteList = whiteList,
         blackList = finalBlackList
@@ -249,21 +248,21 @@ class ECommAlgorithm(val ap: ECommAlgorithmParams)
       // For example, new user is created after model is trained.
       logger.info(s"No userFeature found for user ${query.user}.")
 
-      // check if the user has recent events on some items
-      val recentItems: Set[String] = getRecentItems(query)
-      val recentList: Set[Int] = recentItems.flatMap (x =>
-        model.itemStringIntMap.get(x))
+      // check if the user has recent events on some segs
+      val recentSegs: Set[String] = getRecentSegs(query)
+      val recentList: Set[Int] = recentSegs.flatMap (x =>
+        model.segStringIntMap.get(x))
 
       val recentFeatures: Vector[Array[Double]] = recentList.toVector
-        // productModels may not contain the requested item
+        // segModels may not contain the requested seg
         .map { i =>
-          productModels.get(i).flatMap { pm => pm.features }
+          segModels.get(i).flatMap { sm => sm.features }
         }.flatten
 
       if (recentFeatures.isEmpty) {
-        logger.info(s"No features vector for recent items ${recentItems}.")
+        logger.info(s"No features vector for recent seg ${recentSegs}.")
         predictDefault(
-          productModels = productModels,
+          segModels = segModels,
           query = query,
           whiteList = whiteList,
           blackList = finalBlackList
@@ -271,7 +270,7 @@ class ECommAlgorithm(val ap: ECommAlgorithmParams)
       } else {
         predictSimilar(
           recentFeatures = recentFeatures,
-          productModels = productModels,
+          segModels = segModels,
           query = query,
           whiteList = whiteList,
           blackList = finalBlackList
@@ -279,30 +278,30 @@ class ECommAlgorithm(val ap: ECommAlgorithmParams)
       }
     }
 
-    val itemScores = topScores.map { case (i, s) =>
-      new ItemScore(
-        // convert item int index back to string ID
-        item = model.itemIntStringMap(i),
+    val segScores = topScores.map { case (si, s) =>
+      new SegScore(
+        // convert seg int index back to string ID
+        seg = model.segIntStringMap(si),
         score = s
       )
     }
 
-    new PredictedResult(itemScores)
+    new PredictedResult(segScores)
   }
 
   /** Generate final blackList based on other constraints */
   def genBlackList(query: Query): Set[String] = {
-    // if unseenOnly is True, get all seen items
-    val seenItems: Set[String] = if (ap.unseenOnly) {
+    // if unseenOnly is True, get all seen segs
+    val seenSegs: Set[String] = if (ap.unseenOnly) {
 
-      // get all user item events which are considered as "seen" events
+      // get all user seg events which are considered as "seen" events
       val seenEvents: Iterator[Event] = try {
         LEventStore.findByEntity(
           appName = ap.appName,
           entityType = "user",
           entityId = query.user,
           eventNames = Some(ap.seenEvents),
-          targetEntityType = Some(Some("item")),
+          targetEntityType = Some(Some("seg")),
           // set time limit to avoid super long DB access
           timeout = Duration(200, "millis")
         )
@@ -330,40 +329,40 @@ class ECommAlgorithm(val ap: ECommAlgorithmParams)
       Set[String]()
     }
 
-    // get the latest constraint unavailableItems $set event
-    val unavailableItems: Set[String] = try {
+    // get the latest constraint unavailableSegs $set event
+    val unavailableSegs: Set[String] = try {
       val constr = LEventStore.findByEntity(
         appName = ap.appName,
         entityType = "constraint",
-        entityId = "unavailableItems",
+        entityId = "unavailableSegs",
         eventNames = Some(Seq("$set")),
         limit = Some(1),
         latest = true,
         timeout = Duration(200, "millis")
       )
       if (constr.hasNext) {
-        constr.next.properties.get[Set[String]]("items")
+        constr.next.properties.get[Set[String]]("segs")
       } else {
         Set[String]()
       }
     } catch {
       case e: scala.concurrent.TimeoutException =>
-        logger.error(s"Timeout when read set unavailableItems event." +
+        logger.error(s"Timeout when read set unavailableSegs event." +
           s" Empty list is used. ${e}")
         Set[String]()
       case e: Exception =>
-        logger.error(s"Error when read set unavailableItems event: ${e}")
+        logger.error(s"Error when read set unavailableSegs event: ${e}")
         throw e
     }
 
-    // combine query's blackList,seenItems and unavailableItems
+    // combine query's blackList,seenSegs and unavailableSegs
     // into final blackList.
-    query.blackList.getOrElse(Set[String]()) ++ seenItems ++ unavailableItems
+    query.blackList.getOrElse(Set[String]()) ++ seenSegs ++ unavailableSegs
   }
 
-  /** Get recent events of the user on items for recommending similar items */
-  def getRecentItems(query: Query): Set[String] = {
-    // get latest 10 user view item events
+  /** Get recent events of the user on segs for similar segs */
+  def getRecentSegs(query: Query): Set[String] = {
+    // get latest 10 user view seg events
     val recentEvents = try {
       LEventStore.findByEntity(
         appName = ap.appName,
@@ -371,7 +370,7 @@ class ECommAlgorithm(val ap: ECommAlgorithmParams)
         entityType = "user",
         entityId = query.user,
         eventNames = Some(ap.similarEvents),
-        targetEntityType = Some(Some("item")),
+        targetEntityType = Some(Some("seg")),
         limit = Some(10),
         latest = true,
         // set time limit to avoid super long DB access
@@ -387,7 +386,7 @@ class ECommAlgorithm(val ap: ECommAlgorithmParams)
         throw e
     }
 
-    val recentItems: Set[String] = recentEvents.map { event =>
+    val recentSegs: Set[String] = recentEvents.map { event =>
       try {
         event.targetEntityId.get
       } catch {
@@ -398,35 +397,34 @@ class ECommAlgorithm(val ap: ECommAlgorithmParams)
       }
     }.toSet
 
-    recentItems
+    recentSegs
   }
 
   /** Prediction for user with known feature vector */
   def predictKnownUser(
     userFeature: Array[Double],
-    productModels: Map[Int, ProductModel],
+    segModels: Map[Int, SegModel],
     query: Query,
     whiteList: Option[Set[Int]],
     blackList: Set[Int]
   ): Array[(Int, Double)] = {
-    val indexScores: Map[Int, Double] = productModels.par // convert to parallel collection
-      .filter { case (i, pm) =>
-        pm.features.isDefined &&
-        isCandidateItem(
+    val indexScores: Map[Int, Double] = segModels.par // convert to parallel collection
+      .filter { case (i, sm) =>
+        sm.features.isDefined &&
+        isCandidateSeg(
           i = i,
-          item = pm.item,
-          categories = query.categories,
+          seg = sm.seg,
           whiteList = whiteList,
           blackList = blackList
         )
       }
-      .map { case (i, pm) =>
+      .map { case (i, sm) =>
         // NOTE: features must be defined, so can call .get
-        val s = dotProduct(userFeature, pm.features.get)
+        val s = dotProduct(userFeature, sm.features.get)
         // may customize here to further adjust score
         (i, s)
       }
-      .filter(_._2 > 0) // only keep items with score > 0
+      .filter(_._2 > 0) // only keep segs with score > 0
       .seq // convert back to sequential collection
 
     val ord = Ordering.by[(Int, Double), Double](_._2).reverse
@@ -437,24 +435,23 @@ class ECommAlgorithm(val ap: ECommAlgorithmParams)
 
   /** Default prediction when know nothing about the user */
   def predictDefault(
-    productModels: Map[Int, ProductModel],
+    segModels: Map[Int, SegModel],
     query: Query,
     whiteList: Option[Set[Int]],
     blackList: Set[Int]
   ): Array[(Int, Double)] = {
-    val indexScores: Map[Int, Double] = productModels.par // convert back to sequential collection
-      .filter { case (i, pm) =>
-        isCandidateItem(
+    val indexScores: Map[Int, Double] = segModels.par // convert back to sequential collection
+      .filter { case (i, sm) =>
+        isCandidateSeg(
           i = i,
-          item = pm.item,
-          categories = query.categories,
+          seg = sm.seg,
           whiteList = whiteList,
           blackList = blackList
         )
       }
-      .map { case (i, pm) =>
+      .map { case (i, sm) =>
         // may customize here to further adjust score
-        (i, pm.count.toDouble)
+        (i, sm.count.toDouble)
       }
       .seq
 
@@ -464,34 +461,33 @@ class ECommAlgorithm(val ap: ECommAlgorithmParams)
     topScores
   }
 
-  /** Return top similar items based on items user recently has action on */
+  /** Return top similar segs based on segs user recently has action on */
   def predictSimilar(
     recentFeatures: Vector[Array[Double]],
-    productModels: Map[Int, ProductModel],
+    segModels: Map[Int, SegModel],
     query: Query,
     whiteList: Option[Set[Int]],
     blackList: Set[Int]
   ): Array[(Int, Double)] = {
-    val indexScores: Map[Int, Double] = productModels.par // convert to parallel collection
-      .filter { case (i, pm) =>
-        pm.features.isDefined &&
-        isCandidateItem(
+    val indexScores: Map[Int, Double] = segModels.par // convert to parallel collection
+      .filter { case (i, sm) =>
+        sm.features.isDefined &&
+        isCandidateSeg(
           i = i,
-          item = pm.item,
-          categories = query.categories,
+          seg = sm.seg,
           whiteList = whiteList,
           blackList = blackList
         )
       }
-      .map { case (i, pm) =>
+      .map { case (i, sm) =>
         val s = recentFeatures.map{ rf =>
-          // pm.features must be defined because of filter logic above
-          cosine(rf, pm.features.get)
+          // sm.features must be defined because of filter logic above
+          cosine(rf, sm.features.get)
         }.reduce(_ + _)
         // may customize here to further adjust score
         (i, s)
       }
-      .filter(_._2 > 0) // keep items with score > 0
+      .filter(_._2 > 0) // keep segs with score > 0
       .seq // convert back to sequential collection
 
     val ord = Ordering.by[(Int, Double), Double](_._2).reverse
@@ -550,24 +546,15 @@ class ECommAlgorithm(val ap: ECommAlgorithmParams)
   }
 
   private
-  def isCandidateItem(
+  def isCandidateSeg(
     i: Int,
-    item: Item,
-    categories: Option[Set[String]],
+    seg: Seg,
     whiteList: Option[Set[Int]],
     blackList: Set[Int]
   ): Boolean = {
     // can add other custom filtering here
     whiteList.map(_.contains(i)).getOrElse(true) &&
-    !blackList.contains(i) &&
-    // filter categories
-    categories.map { cat =>
-      item.categories.map { itemCat =>
-        // keep this item if has ovelap categories with the query
-        !(itemCat.toSet.intersect(cat).isEmpty)
-      }.getOrElse(false) // discard this item if it has no categories
-    }.getOrElse(true)
-
+    !blackList.contains(i)
   }
 
 }

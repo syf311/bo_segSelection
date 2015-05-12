@@ -1,4 +1,4 @@
-package org.template.ecommercerecommendation
+package org.template.segselectionrecommendation
 
 import io.prediction.controller.IEngineFactory
 import io.prediction.controller.Engine
@@ -6,26 +6,25 @@ import io.prediction.controller.Engine
 case class Query(
   user: String,
   num: Int,
-  categories: Option[Set[String]],
   whiteList: Option[Set[String]],
   blackList: Option[Set[String]]
 ) extends Serializable
 
 case class PredictedResult(
-  itemScores: Array[ItemScore]
+  itemScores: Array[SegScore]
 ) extends Serializable
 
-case class ItemScore(
-  item: String,
+case class SegScore(
+  seg: String,
   score: Double
 ) extends Serializable
 
-object ECommerceRecommendationEngine extends IEngineFactory {
+object SegSelectionRecommendationEngine extends IEngineFactory {
   def apply() = {
     new Engine(
       classOf[DataSource],
       classOf[Preparator],
-      Map("ecomm" -> classOf[ECommAlgorithm]),
+      Map("segSel" -> classOf[SegSelectionAlgorithm]),
       classOf[Serving])
   }
 }

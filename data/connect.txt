@@ -1,0 +1,11 @@
+u1 s1
+u2 s1
+u3 s1
+u4 s1
+u1 s2
+u2 s2
+u4 s2
+u2 s3
+u4 s3
+u1 s4
+u2 s5

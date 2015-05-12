@@ -1,4 +1,4 @@
-package org.template.ecommercerecommendation
+package org.template.segselectionrecommendation
 
 import io.prediction.controller.PDataSource
 import io.prediction.controller.EmptyEvaluationInfo
@@ -41,61 +41,43 @@ class DataSource(val dsp: DataSourceParams)
       (entityId, user)
     }.cache()
 
-    // create a RDD of (entityID, Item)
-    val itemsRDD: RDD[(String, Item)] = PEventStore.aggregateProperties(
+    // create a RDD of (entityID, Seg)
+    val segsRDD: RDD[(String, Seg)] = PEventStore.aggregateProperties(
       appName = dsp.appName,
-      entityType = "item"
+      entityType = "seg"
     )(sc).map { case (entityId, properties) =>
-      val item = try {
-        // Assume categories is optional property of item.
-        Item(categories = properties.getOpt[List[String]]("categories"))
+      val seg = try {
+        Seg()
       } catch {
         case e: Exception => {
           logger.error(s"Failed to get properties ${properties} of" +
-            s" item ${entityId}. Exception: ${e}.")
+            s" seg ${entityId}. Exception: ${e}.")
           throw e
         }
       }
-      (entityId, item)
+      (entityId, seg)
     }.cache()
 
     val eventsRDD: RDD[Event] = PEventStore.find(
       appName = dsp.appName,
       entityType = Some("user"),
-      eventNames = Some(List("view", "buy")),
+      eventNames = Some(List("connect")),
       // targetEntityType is optional field of an event.
-      targetEntityType = Some(Some("item")))(sc)
+      targetEntityType = Some(Some("seg")))(sc)
       .cache()
 
-    val viewEventsRDD: RDD[ViewEvent] = eventsRDD
-      .filter { event => event.event == "view" }
+    val connectEventsRDD: RDD[ConnectEvent] = eventsRDD
+      .filter { event => event.event == "connect" }
       .map { event =>
         try {
-          ViewEvent(
+          ConnectEvent(
             user = event.entityId,
-            item = event.targetEntityId.get,
+            seg = event.targetEntityId.get,
             t = event.eventTime.getMillis
           )
         } catch {
           case e: Exception =>
-            logger.error(s"Cannot convert ${event} to ViewEvent." +
-              s" Exception: ${e}.")
-            throw e
-        }
-      }
-
-    val buyEventsRDD: RDD[BuyEvent] = eventsRDD
-      .filter { event => event.event == "buy" }
-      .map { event =>
-        try {
-          BuyEvent(
-            user = event.entityId,
-            item = event.targetEntityId.get,
-            t = event.eventTime.getMillis
-          )
-        } catch {
-          case e: Exception =>
-            logger.error(s"Cannot convert ${event} to BuyEvent." +
+            logger.error(s"Cannot convert ${event} to ConnectEvent." +
               s" Exception: ${e}.")
             throw e
         }
@@ -103,31 +85,26 @@ class DataSource(val dsp: DataSourceParams)
 
     new TrainingData(
       users = usersRDD,
-      items = itemsRDD,
-      viewEvents = viewEventsRDD,
-      buyEvents = buyEventsRDD
+      segs = segsRDD,
+      connectEvents = connectEventsRDD
     )
   }
 }
 
 case class User()
 
-case class Item(categories: Option[List[String]])
+case class Seg()
 
-case class ViewEvent(user: String, item: String, t: Long)
-
-case class BuyEvent(user: String, item: String, t: Long)
+case class ConnectEvent(user: String, seg: String, t: Long)
 
 class TrainingData(
   val users: RDD[(String, User)],
-  val items: RDD[(String, Item)],
-  val viewEvents: RDD[ViewEvent],
-  val buyEvents: RDD[BuyEvent]
+  val segs: RDD[(String, Seg)],
+  val connectEvents: RDD[ConnectEvent]
 ) extends Serializable {
   override def toString = {
     s"users: [${users.count()} (${users.take(2).toList}...)]" +
-    s"items: [${items.count()} (${items.take(2).toList}...)]" +
-    s"viewEvents: [${viewEvents.count()}] (${viewEvents.take(2).toList}...)" +
-    s"buyEvents: [${buyEvents.count()}] (${buyEvents.take(2).toList}...)"
+    s"segs: [${segs.count()} (${segs.take(2).toList}...)]" +
+    s"connectEvents: [${connectEvents.count()}] (${connectEvents.take(2).toList}...)"
   }
 }

@@ -1,20 +1,20 @@
 {
   "id": "default",
   "description": "Default settings",
-  "engineFactory": "org.template.ecommercerecommendation.ECommerceRecommendationEngine",
+  "engineFactory": "org.template.segselectionrecommendation.SegSelectionRecommendationEngine",
   "datasource": {
     "params" : {
-      "appName": "INVALID_APP_NAME"
+      "appName": "bo_segselection_test3"
     }
   },
   "algorithms": [
     {
-      "name": "ecomm",
+      "name": "segSel",
       "params": {
-        "appName": "INVALID_APP_NAME",
+        "appName": "bo_segselection_test3",
         "unseenOnly": true,
-        "seenEvents": ["buy", "view"],
-        "similarEvents": ["view"],
+        "seenEvents": ["connect"],
+        "similarEvents": ["connect"],
         "rank": 10,
         "numIterations" : 20,
         "lambda": 0.01,
